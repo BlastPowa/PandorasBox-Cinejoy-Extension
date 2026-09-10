@@ -1,9 +1,9 @@
 # Privacy
 
-PBox Cinejoy Auto Sync has one purpose: synchronise a user's Pandora's Box library and watch progress with Cinejoy.
+PBox Watch Sync tracks media playback in the browser so the signed-in user's Pandora's Box watch progress can be updated.
 
-The extension reads Cinejoy page/player state only to identify the current movie/episode and playback position. It reads the signed-in user's Pandora's Box library only to perform list synchronisation. Playback updates are sent to that user's Pandora's Box site session.
+The extension reads page/player state needed to identify the current title, season/episode where available, playback position, duration, and completion state. Cinejoy list sync also reads the user's Pandora's Box movie/TV library so titles with TMDB IDs can be added to the user's Cinejoy list.
 
-The extension does not sell user data, does not use data for advertising, and does not collect passwords or payment information. A small rolling diagnostic history of Cinejoy playback events is stored locally in the browser so changes to Cinejoy's player can be diagnosed.
+Playback updates are sent only to the user's active Pandora's Box web session. The extension does not collect streaming-service passwords or payment information, does not sell user data, and does not use playback data for advertising. A small rolling diagnostic history of watch-sync events is stored locally in the browser for troubleshooting.
 
-Broad host permission is required because Cinejoy can embed its actual video player inside third-party cross-origin frames. Monitoring logic first verifies that the containing browser tab is a Cinejoy tab before processing playback.
+Broad host permission is required because supported streaming players may run in cross-origin frames and because PBox Watch Sync can detect compatible long-form HTML5 players beyond the explicitly targeted providers. Short videos are ignored, and generic-provider progress is discarded when PBox cannot identify the media confidently.

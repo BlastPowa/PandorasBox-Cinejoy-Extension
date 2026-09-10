@@ -1,51 +1,40 @@
-# PBox Cinejoy Auto Sync
+# PBox Watch Sync
 
-Chrome/Chromium extension for Pandora's Box. It copies a user's Pandora's Box movie/TV library into Cinejoy and mirrors Cinejoy playback progress, completed movies, and completed TV/anime episodes back into Pandora's Box.
+PBox Watch Sync is the Chromium browser extension for Pandora's Box. It tracks movie and episode playback from Cinejoy, Netflix, Prime Video, and compatible long-form HTML5 players, then updates the signed-in user's PBox progress. Cinejoy also supports copying the user's PBox movie/TV list into a Cinejoy list because Cinejoy URLs expose exact TMDB IDs.
 
 ## Install
 
-For development, download the latest GitHub release ZIP, extract it, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the extracted folder.
+1. Download the latest `pbox-watch-sync.zip` from this repository's Releases page.
+2. Extract it to a permanent folder.
+3. Open `chrome://extensions` in Chrome or another Chromium browser.
+4. Enable **Developer mode**.
+5. Click **Load unpacked** and select the extracted folder containing `manifest.json`.
+6. Sign in to Pandora's Box in the same browser. Settings → Integrations will show the extension as active.
 
-For normal users, publish the extension through the Chrome Web Store. Store-installed copies update automatically through Chrome after each approved release, so users do not need to download new ZIPs or reload unpacked files.
+No streaming-service password and no Trakt VIP subscription are required.
+
+## Updating
+
+Pandora's Box checks the latest GitHub release version and shows when an update is available. Download the newest ZIP, replace the files in the existing extension folder, then click **Reload** on the extension card in `chrome://extensions`. Unpacked Chromium extensions cannot silently self-update.
 
 ## Releasing an update
 
 1. Edit the extension.
-2. Run `node scripts/bump-version.mjs patch` (or `minor` / `major`).
+2. Increase the version in `manifest.json` (or use `node scripts/bump-version.mjs patch` when that script is available).
 3. Commit and push to `main`.
 
-The `Release extension` GitHub Action detects the new manifest version, creates `pbox-cinejoy-auto-sync.zip`, creates a matching GitHub release, and—after Chrome Web Store automation is enabled—uploads and submits the update through the Chrome Web Store API v2.
+The `Release extension` GitHub Action packages `pbox-watch-sync.zip` and creates a matching `vX.Y.Z` GitHub release. Pushing without increasing the manifest version does not create a duplicate release.
 
-Pushing code without increasing `manifest.json`'s version does not create a second release for the same version.
+## What it tracks
 
-## One-time Chrome Web Store setup
+- Cinejoy: exact TMDB-based movie/series identity, live progress, movie completion, exact season/episode completion, and PBox-list-to-Cinejoy import.
+- Netflix and Prime Video: targeted title and season/episode extraction plus playback progress.
+- Other compatible sites: long-form HTML5 video tracking with conservative title matching.
+- Playback updates are queued while PBox is closed or signed out and retried later.
+- Short videos under five minutes are ignored.
 
-Chrome Web Store API v2 can update an existing store item but cannot create the first item. Do this once in the Chrome Web Store Developer Dashboard:
+PBox only writes generic-provider progress when it can identify the media confidently. For series, both season and episode are required. Ambiguous matches are ignored.
 
-1. Register/verify the publisher account and create the extension item by uploading a release ZIP.
-2. Complete the Store listing and Privacy tabs and choose the intended visibility (Unlisted is suitable if this is only for Pandora's Box users/friends).
-3. In Google Cloud, enable **Chrome Web Store API** and create a service account.
-4. Add the service-account email to the publisher account in the Chrome Web Store Developer Dashboard.
-5. Create a JSON key for that service account.
-6. In this GitHub repository add these Actions variables:
-   - `CHROME_WEBSTORE_PUBLISHER_ID`
-   - `CHROME_WEBSTORE_EXTENSION_ID`
-   - `CHROME_WEBSTORE_ENABLED` = `true`
-7. Add this Actions secret:
-   - `CHROME_WEBSTORE_SERVICE_ACCOUNT_JSON` = the full service-account JSON key.
+## Permissions
 
-After that, a version-bumped push to `main` packages the extension and submits it to Chrome Web Store review automatically. Chrome then distributes the approved update to installed copies.
-
-## What it syncs
-
-- Detects Cinejoy movie and TV playback.
-- Sends live progress to Pandora's Box roughly every 30 seconds and on play/pause/seek/end events.
-- Marks a movie or episode complete at the configured completion threshold.
-- Copies Pandora's Box movies and shows with TMDB IDs into a Cinejoy `Pandora's Box` list.
-- Queues updates while Pandora's Box is closed, offline, or signed out, then retries later.
-
-## Broad site access
-
-Cinejoy may place the actual video player in a cross-origin third-party iframe. Chrome needs host permission for those iframe origins before the extension can observe the video element. The content script asks the background worker whether the containing tab is Cinejoy before it monitors playback, so non-Cinejoy tabs are ignored by the tracking logic.
-
-See `PRIVACY.md` and `STORE_LISTING.md` for the store disclosure/permission text.
+The extension uses broad host access because streaming sites can place video players in cross-origin frames and because generic HTML5-player support must inspect the active page/frame containing the video element. See `PRIVACY.md` for data-handling details.

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "PBox Cinejoy Auto Sync",
-  "version": "1.1.0",
-  "description": "Syncs Pandora's Box lists to Cinejoy and Cinejoy playback progress back into Pandora's Box.",
+  "name": "PBox Watch Sync",
+  "version": "1.2.0",
+  "description": "Tracks movie and episode playback across Cinejoy, Netflix, Prime Video and compatible HTML5 players, with Cinejoy list sync.",
   "permissions": ["storage", "tabs", "scripting", "alarms"],
   "host_permissions": ["<all_urls>"],
   "icons": {

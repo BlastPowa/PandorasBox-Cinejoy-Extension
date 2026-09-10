@@ -8,7 +8,7 @@ const CINEJOY_LIST_NAME = "Pandora's Box";
 const MAX_PENDING = 100;
 const MAX_EVENTS = 500;
 const pboxTabs = new Map();
-const cinejoyContexts = new Map();
+const tabContexts = new Map();
 const lastForwarded = new Map();
 let flushPromise = null;
 let librarySyncPromise = null;
@@ -30,8 +30,38 @@ function parseCinejoyUrl(rawUrl) {
   return null;
 }
 
+function siteFromUrl(rawUrl) {
+  if (!rawUrl) return null;
+  if (parseCinejoyUrl(rawUrl)) return "cinejoy";
+  try {
+    const url = new URL(rawUrl);
+    if (!/^https?:$/.test(url.protocol)) return null;
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    if (/(^|\.)netflix\.com$/.test(host)) return "netflix";
+    if (/(^|\.)primevideo\.com$/.test(host) || /(^|\.)amazon\.[a-z.]+$/.test(host)) return "prime-video";
+    if (/(^|\.)disneyplus\.com$/.test(host)) return "disney-plus";
+    if (/(^|\.)crunchyroll\.com$/.test(host)) return "crunchyroll";
+    if (/(^|\.)hulu\.com$/.test(host)) return "hulu";
+    if (/(^|\.)(?:max|hbomax)\.com$/.test(host)) return "max";
+    if (/(^|\.)peacocktv\.com$/.test(host)) return "peacock";
+    if (/(^|\.)paramountplus\.com$/.test(host)) return "paramount-plus";
+    if (/(^|\.)tv\.apple\.com$/.test(host)) return "apple-tv";
+    return host;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedTitle(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function eventKey(event) {
-  return `${event.tmdbId}:${event.mediaType}:${event.season ?? 0}:${event.episode ?? 0}`;
+  const identity = event.tmdbId ? `tmdb:${event.tmdbId}` : `title:${normalizedTitle(event.title)}`;
+  return `${identity}:${event.mediaType ?? "unknown"}:${event.season ?? 0}:${event.episode ?? 0}`;
 }
 
 function shouldForward(event) {
@@ -46,8 +76,8 @@ function shouldForward(event) {
 }
 
 async function rememberDiagnostic(event) {
-  const { cinejoyPlaybackEvents = [] } = await chrome.storage.local.get({ cinejoyPlaybackEvents: [] });
-  await chrome.storage.local.set({ cinejoyPlaybackEvents: [...cinejoyPlaybackEvents, event].slice(-MAX_EVENTS) });
+  const { pboxWatchSyncEvents = [] } = await chrome.storage.local.get({ pboxWatchSyncEvents: [] });
+  await chrome.storage.local.set({ pboxWatchSyncEvents: [...pboxWatchSyncEvents, event].slice(-MAX_EVENTS) });
 }
 
 async function savePending(event) {
@@ -55,6 +85,7 @@ async function savePending(event) {
   const key = eventKey(event);
   const existing = pending.find((item) => eventKey(item) === key);
   if (existing?.completed && !event.completed) return;
+  if (!event.completed && Number(existing?.percent ?? 0) > Number(event.percent ?? 0)) return;
   const next = pending.filter((item) => eventKey(item) !== key);
   next.push(event);
   await chrome.storage.local.set({ [PENDING_KEY]: next.slice(-MAX_PENDING) });
@@ -104,14 +135,18 @@ async function sendToPbox(event) {
       });
       const result = results?.[0]?.result;
       if (result?.ok) {
-        console.log("[PBox Cinejoy Sync] synced", eventKey(event), result.body);
+        console.log("[PBox Watch Sync] synced", eventKey(event), result.body);
         return true;
       }
-      if (result?.status === 401) console.warn("[PBox Cinejoy Sync] PBox is open but signed out; queued for later.");
-      else console.warn("[PBox Cinejoy Sync] delivery failed", origin, result);
+      if ([400, 404, 409, 422].includes(result?.status)) {
+        console.info("[PBox Watch Sync] ignored unidentifiable playback", eventKey(event), result?.body);
+        return true;
+      }
+      if (result?.status === 401) console.warn("[PBox Watch Sync] PBox is open but signed out; queued for later.");
+      else console.warn("[PBox Watch Sync] delivery failed", origin, result);
     } catch (error) {
       pboxTabs.delete(tabId);
-      console.warn("[PBox Cinejoy Sync] tab delivery failed", error);
+      console.warn("[PBox Watch Sync] tab delivery failed", error);
     }
   }
   return false;
@@ -317,24 +352,37 @@ async function handlePlayback(message, sender) {
   const tabId = sender.tab?.id;
   const tabUrl = sender.tab?.url ?? null;
   const directContext = parseCinejoyUrl(tabUrl);
-  if (tabId == null || !directContext) return;
+  if (tabId == null) return;
 
-  const tabContext = cinejoyContexts.get(tabId) ?? directContext;
+  const tabContext = tabContexts.get(tabId) ?? null;
+  const frameContext = message.context && typeof message.context === "object" ? message.context : null;
+  const site = directContext ? "cinejoy" : (tabContext?.site || frameContext?.site || siteFromUrl(tabUrl));
+  if (!site) return;
+
+  const mediaType = directContext?.mediaType || tabContext?.mediaType || frameContext?.mediaType || null;
+  const tmdbId = directContext?.tmdbId || tabContext?.tmdbId || frameContext?.tmdbId || null;
+  const season = directContext?.season ?? tabContext?.season ?? frameContext?.season ?? null;
+  const episode = directContext?.episode ?? tabContext?.episode ?? frameContext?.episode ?? null;
+  const title = tabContext?.title || frameContext?.title || sender.tab?.title || message.frameTitle || null;
   const event = {
     ...message,
-    ...directContext,
-    ...tabContext,
-    source: "cinejoy",
+    source: site,
+    site,
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    pageUrl: directContext?.pageUrl || tabContext?.pageUrl || frameContext?.pageUrl || tabUrl,
     frameUrl: message.frameUrl ?? null,
     currentTime: message.currentTime ?? 0,
     duration: message.duration ?? null,
     percent: message.percent ?? null,
     completed: Boolean(message.completed),
-    title: tabContext.title ?? sender.tab?.title ?? message.frameTitle ?? null,
+    title,
     recordedAt: new Date().toISOString(),
   };
 
-  if (!event.tmdbId || !event.mediaType) return;
+  if (!event.tmdbId && !normalizedTitle(event.title)) return;
   await rememberDiagnostic(event);
   if (shouldForward(event)) await deliverOrQueue(event);
 }
@@ -345,7 +393,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const run = async () => {
     const tabId = sender.tab?.id;
     if (message.type === "tab-role") {
-      return { ok: true, cinejoy: Boolean(parseCinejoyUrl(sender.tab?.url ?? null)) };
+      const tabUrl = sender.tab?.url ?? null;
+      const site = siteFromUrl(tabUrl);
+      return {
+        ok: true,
+        cinejoy: site === "cinejoy",
+        trackable: Boolean(site),
+        site,
+        tabUrl,
+        tabTitle: sender.tab?.title ?? null,
+      };
     }
 
     if (message.type === "pbox-register" && tabId != null) {
@@ -365,14 +422,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return { ok: true, scheduled: true };
     }
 
-    if (message.type === "cinejoy-context" && tabId != null) {
-      cinejoyContexts.set(tabId, {
-        mediaType: message.mediaType,
-        tmdbId: message.tmdbId,
+    if ((message.type === "provider-context" || message.type === "cinejoy-context") && tabId != null) {
+      tabContexts.set(tabId, {
+        mediaType: message.mediaType ?? null,
+        tmdbId: message.tmdbId ?? null,
         season: message.season ?? null,
         episode: message.episode ?? null,
         pageUrl: message.pageUrl ?? sender.tab?.url ?? null,
         title: message.title ?? sender.tab?.title ?? null,
+        site: message.site || siteFromUrl(sender.tab?.url ?? null),
       });
       return { ok: true };
     }
@@ -382,7 +440,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   };
 
   void run().then((result) => sendResponse(result ?? { ok: true })).catch((error) => {
-    console.error("[PBox Cinejoy Sync]", error);
+    console.error("[PBox Watch Sync]", error);
     sendResponse({ ok: false, error: String(error) });
   });
   return true;
@@ -390,7 +448,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pboxTabs.delete(tabId);
-  cinejoyContexts.delete(tabId);
+  tabContexts.delete(tabId);
 });
 
 function ensureFlushAlarm() {
