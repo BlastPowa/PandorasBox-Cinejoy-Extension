@@ -1,0 +1,117 @@
+name: Release extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - manifest.json
+      - background.js
+      - content.js
+      - icons/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      is_new: ${{ steps.meta.outputs.is_new }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check release
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")"
+          if [[ -z "$VERSION" ]]; then
+            echo "manifest.json has no version" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "is_new=false" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION already exists; nothing to publish."
+          else
+            echo "is_new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package extension
+        if: steps.meta.outputs.is_new == 'true'
+        run: zip -r pbox-cinejoy-auto-sync.zip manifest.json background.js content.js icons
+
+      - name: Create GitHub release
+        if: steps.meta.outputs.is_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.meta.outputs.version }}" \
+            pbox-cinejoy-auto-sync.zip \
+            --title "PBox Cinejoy Auto Sync v${{ steps.meta.outputs.version }}" \
+            --generate-notes
+
+  publish-chrome-web-store:
+    needs: release
+    if: needs.release.outputs.is_new == 'true' && vars.CHROME_WEBSTORE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.CHROME_WEBSTORE_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+
+      - name: Package extension
+        run: zip -r pbox-cinejoy-auto-sync.zip manifest.json background.js content.js icons
+
+      - name: Upload and submit to Chrome Web Store
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          PUBLISHER_ID: ${{ vars.CHROME_WEBSTORE_PUBLISHER_ID }}
+          EXTENSION_ID: ${{ vars.CHROME_WEBSTORE_EXTENSION_ID }}
+        shell: bash
+        run: |
+          if [[ -z "$PUBLISHER_ID" || -z "$EXTENSION_ID" ]]; then
+            echo "Chrome Web Store publisher/extension variables are missing." >&2
+            exit 1
+          fi
+
+          ITEM="publishers/$PUBLISHER_ID/items/$EXTENSION_ID"
+          UPLOAD_URL="https://chromewebstore.googleapis.com/upload/v2/$ITEM:upload"
+          STATUS_URL="https://chromewebstore.googleapis.com/v2/$ITEM:fetchStatus"
+          PUBLISH_URL="https://chromewebstore.googleapis.com/v2/$ITEM:publish"
+
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/zip" \
+            --data-binary @pbox-cinejoy-auto-sync.zip \
+            "$UPLOAD_URL"
+
+          for attempt in {1..10}; do
+            STATUS="$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              "$STATUS_URL")"
+            echo "$STATUS"
+            if ! grep -q 'UPLOAD_IN_PROGRESS' <<< "$STATUS"; then
+              break
+            fi
+            sleep 3
+          done
+
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "$PUBLISH_URL"
