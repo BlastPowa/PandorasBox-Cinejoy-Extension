@@ -1,6 +1,6 @@
 # PBox Watch Sync
 
-PBox Watch Sync is the Chromium browser extension for Pandora's Box. It tracks movie and episode playback from Cinejoy, Netflix, Prime Video, and compatible long-form HTML5 players, then updates the signed-in user's PBox progress. Cinejoy also supports copying the user's PBox movie/TV list into a Cinejoy list because Cinejoy URLs expose exact TMDB IDs.
+PBox Watch Sync is the Chromium browser extension for Pandora's Box. It tracks movie and episode playback from Cinejoy, CinemaOS, Netflix, Prime Video, and compatible long-form HTML5 players, then updates the signed-in user's PBox progress. Cinejoy also supports copying the user's PBox movie/TV list into a Cinejoy list because Cinejoy URLs expose exact TMDB IDs.
 
 ## Install
 
@@ -28,6 +28,7 @@ The `Release extension` GitHub Action packages `pbox-watch-sync.zip` and creates
 ## What it tracks
 
 - Cinejoy: exact TMDB-based movie/series identity, live progress, movie completion, exact season/episode completion, and PBox-list-to-Cinejoy import.
+- CinemaOS: exact TMDB-based movie/series identity from public watch URLs, with visible season/episode metadata used for live progress and episode completion.
 - Netflix and Prime Video: targeted title and season/episode extraction plus playback progress.
 - Other compatible sites: long-form HTML5 video tracking with conservative title matching.
 - Playback updates are queued while PBox is closed or signed out and retried later.

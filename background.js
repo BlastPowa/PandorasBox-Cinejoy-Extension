@@ -30,9 +30,28 @@ function parseCinejoyUrl(rawUrl) {
   return null;
 }
 
+function parseCinemaOsUrl(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    const url = new URL(rawUrl);
+    if (!/(^|\.)cinemaos\.(?:live|tech|me|in)$/i.test(url.hostname)) return null;
+    const match = url.pathname.match(/^\/(movie|tv)(?:\/watch)?\/(\d+)(?:\/|$)/i);
+    if (!match) return null;
+    return {
+      mediaType: match[1].toLowerCase() === "movie" ? "movie" : "series",
+      tmdbId: Number(match[2]),
+      season: null,
+      episode: null,
+      pageUrl: rawUrl,
+    };
+  } catch {}
+  return null;
+}
+
 function siteFromUrl(rawUrl) {
   if (!rawUrl) return null;
   if (parseCinejoyUrl(rawUrl)) return "cinejoy";
+  if (parseCinemaOsUrl(rawUrl)) return "cinemaos";
   try {
     const url = new URL(rawUrl);
     if (!/^https?:$/.test(url.protocol)) return null;
@@ -351,12 +370,15 @@ async function syncLibraryToCinejoy({ force = false } = {}) {
 async function handlePlayback(message, sender) {
   const tabId = sender.tab?.id;
   const tabUrl = sender.tab?.url ?? null;
-  const directContext = parseCinejoyUrl(tabUrl);
+  const cinejoyContext = parseCinejoyUrl(tabUrl);
+  const cinemaOsContext = parseCinemaOsUrl(tabUrl);
+  const directContext = cinejoyContext || cinemaOsContext;
+  const directSite = cinejoyContext ? "cinejoy" : (cinemaOsContext ? "cinemaos" : null);
   if (tabId == null) return;
 
   const tabContext = tabContexts.get(tabId) ?? null;
   const frameContext = message.context && typeof message.context === "object" ? message.context : null;
-  const site = directContext ? "cinejoy" : (tabContext?.site || frameContext?.site || siteFromUrl(tabUrl));
+  const site = directSite || tabContext?.site || frameContext?.site || siteFromUrl(tabUrl);
   if (!site) return;
 
   const mediaType = directContext?.mediaType || tabContext?.mediaType || frameContext?.mediaType || null;
@@ -398,6 +420,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return {
         ok: true,
         cinejoy: site === "cinejoy",
+        cinemaos: site === "cinemaos",
         trackable: Boolean(site),
         site,
         tabUrl,

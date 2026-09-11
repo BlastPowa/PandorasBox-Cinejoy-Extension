@@ -36,6 +36,23 @@
     return null;
   }
 
+  function parseCinemaOsUrl(rawUrl) {
+    if (!rawUrl) return null;
+    try {
+      const url = new URL(rawUrl);
+      if (!/(^|\.)cinemaos\.(?:live|tech|me|in)$/i.test(url.hostname)) return null;
+      const match = url.pathname.match(/^\/(movie|tv)(?:\/watch)?\/(\d+)(?:\/|$)/i);
+      if (!match) return null;
+      return {
+        mediaType: match[1].toLowerCase() === "movie" ? "movie" : "series",
+        tmdbId: Number(match[2]),
+        season: null,
+        episode: null,
+      };
+    } catch {}
+    return null;
+  }
+
   function textOf(selector) {
     const value = document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim();
     return value || null;
@@ -181,6 +198,20 @@
         site: "cinejoy",
         pageUrl: topUrl,
         title: cleanTitle(firstText(["h1"]) || metadata.title || tabRole?.tabTitle || document.title, "cinejoy"),
+      };
+    }
+
+    const cinemaos = parseCinemaOsUrl(topUrl) || parseCinemaOsUrl(location.href);
+    if (cinemaos) {
+      const metadata = providerMetadata("cinemaos");
+      const numbers = extractSeasonEpisode(`${metadata.title ?? ""} ${document.title ?? ""}`);
+      return {
+        ...cinemaos,
+        season: cinemaos.mediaType === "series" ? numbers.season : null,
+        episode: cinemaos.mediaType === "series" ? numbers.episode : null,
+        site: "cinemaos",
+        pageUrl: topUrl,
+        title: cleanTitle(metadata.title || tabRole?.tabTitle || document.title, "cinemaos"),
       };
     }
 
