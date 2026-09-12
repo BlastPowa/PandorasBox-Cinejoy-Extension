@@ -111,14 +111,31 @@ async function savePending(event) {
 }
 
 async function candidatePboxTabs() {
-  const knownTabs = [...pboxTabs.entries()].map(([tabId, origin]) => ({ tabId, origin }));
-  if (knownTabs.length) return knownTabs;
-
   const stored = await chrome.storage.local.get({ [ORIGIN_KEY]: "http://localhost:3000" });
   const origin = stored[ORIGIN_KEY];
   if (!origin) return [];
+
+  const normalizedOrigin = origin.replace(/\/$/, "");
+  const knownTabs = [];
+  for (const [tabId, knownOrigin] of pboxTabs.entries()) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const expectedOrigin = (knownOrigin || origin).replace(/\/$/, "");
+      if (tab?.id != null && tab.url?.startsWith(`${expectedOrigin}/`)) {
+        knownTabs.push({ tabId, origin: knownOrigin || origin });
+      } else {
+        pboxTabs.delete(tabId);
+        tabContexts.delete(tabId);
+      }
+    } catch {
+      pboxTabs.delete(tabId);
+      tabContexts.delete(tabId);
+    }
+  }
+  if (knownTabs.length) return knownTabs;
+
   try {
-    const matches = await chrome.tabs.query({ url: `${origin.replace(/\/$/, "")}/*` });
+    const matches = await chrome.tabs.query({ url: `${normalizedOrigin}/*` });
     for (const tab of matches) {
       if (tab.id != null) pboxTabs.set(tab.id, origin);
     }
@@ -163,9 +180,9 @@ async function sendToPbox(event) {
       }
       if (result?.status === 401) console.warn("[PBox Watch Sync] PBox is open but signed out; queued for later.");
       else console.warn("[PBox Watch Sync] delivery failed", origin, result);
-    } catch (error) {
+    } catch {
       pboxTabs.delete(tabId);
-      console.warn("[PBox Watch Sync] tab delivery failed", error);
+      tabContexts.delete(tabId);
     }
   }
   return false;
@@ -212,6 +229,7 @@ async function fetchPboxLibrary() {
       if (result?.status === 401) return null;
     } catch {
       pboxTabs.delete(tabId);
+      tabContexts.delete(tabId);
     }
   }
   return null;
@@ -336,7 +354,14 @@ async function syncLibraryToCinejoy({ force = false } = {}) {
       for (let index = 0; index < candidates.length; index += 1) {
         const item = candidates[index];
         const url = `https://cinejoy.to/${item.mediaType === "movie" ? "movie" : "series"}/${item.tmdbId}`;
-        if (index > 0) await chrome.tabs.update(tabId, { url });
+        if (index > 0) {
+          try {
+            await chrome.tabs.update(tabId, { url });
+          } catch {
+            failed += candidates.length - index;
+            break;
+          }
+        }
         const loaded = await waitForTabComplete(tabId);
         if (!loaded) {
           failed += 1;
@@ -432,7 +457,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pboxTabs.set(tabId, message.origin);
       await chrome.storage.local.set({ [ORIGIN_KEY]: message.origin });
       await flushPending();
-      void syncLibraryToCinejoy();
       return { ok: true };
     }
 
@@ -441,8 +465,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "pbox-library-changed") {
-      void syncLibraryToCinejoy();
-      return { ok: true, scheduled: true };
+      return { ok: true, scheduled: false };
     }
 
     if ((message.type === "provider-context" || message.type === "cinejoy-context") && tabId != null) {
@@ -476,7 +499,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 function ensureFlushAlarm() {
   chrome.alarms.create(FLUSH_ALARM, { periodInMinutes: 1 });
-  chrome.alarms.create(LIBRARY_SYNC_ALARM, { periodInMinutes: 5 });
+  void chrome.alarms.clear(LIBRARY_SYNC_ALARM);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -491,7 +514,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === FLUSH_ALARM) void flushPending();
-  if (alarm.name === LIBRARY_SYNC_ALARM) void syncLibraryToCinejoy();
+  if (alarm.name === LIBRARY_SYNC_ALARM) void chrome.alarms.clear(LIBRARY_SYNC_ALARM);
 });
 
 ensureFlushAlarm();

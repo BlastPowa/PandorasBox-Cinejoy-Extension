@@ -7,6 +7,46 @@
   let pboxRegistered = false;
   let pboxSyncListenersRegistered = false;
   let tabRole = null;
+  let extensionAlive = true;
+  let tickTimer = null;
+
+  function stopTracking() {
+    if (!extensionAlive) return;
+    extensionAlive = false;
+    if (tickTimer != null) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+    observer.disconnect();
+  }
+
+  async function sendRuntimeMessage(message) {
+    if (!extensionAlive) return null;
+    try {
+      if (!chrome?.runtime?.id) {
+        stopTracking();
+        return null;
+      }
+      return await chrome.runtime.sendMessage(message);
+    } catch (error) {
+      if (/extension context invalidated/i.test(String(error))) stopTracking();
+      return null;
+    }
+  }
+
+  function extensionVersion() {
+    if (!extensionAlive) return null;
+    try {
+      if (!chrome?.runtime?.id) {
+        stopTracking();
+        return null;
+      }
+      return chrome.runtime.getManifest().version;
+    } catch {
+      stopTracking();
+      return null;
+    }
+  }
 
   function parseCinejoyUrl(rawUrl) {
     if (!rawUrl) return null;
@@ -229,6 +269,7 @@
   }
 
   function sendContext(reason) {
+    if (!extensionAlive) return;
     if (window.top !== window) return;
     const context = currentMediaContext();
     if (!context?.title && !context?.tmdbId) return;
@@ -243,15 +284,17 @@
     ]);
     if (reason === "tick" && signature === lastContextSignature) return;
     lastContextSignature = signature;
-    chrome.runtime.sendMessage({ source: SOURCE, type: "provider-context", reason, ...context }).catch(() => {});
+    void sendRuntimeMessage({ source: SOURCE, type: "provider-context", reason, ...context });
   }
 
   function registerPbox() {
+    if (!extensionAlive) return false;
     const marker = document.querySelector('meta[name="application-name"]');
     if (marker?.getAttribute("content") !== "PBox") return false;
     if (!pboxRegistered) {
+      const version = extensionVersion();
+      if (!version) return false;
       pboxRegistered = true;
-      const version = chrome.runtime.getManifest().version;
       document.documentElement.setAttribute("data-pbox-cinejoy-extension", "1");
       document.documentElement.setAttribute("data-pbox-cinejoy-extension-version", version);
       document.documentElement.setAttribute("data-pbox-watch-sync-extension", "1");
@@ -264,8 +307,9 @@
       pboxSyncListenersRegistered = true;
 
       window.addEventListener("pbox-cinejoy-sync-library", () => {
-        chrome.runtime.sendMessage({ source: SOURCE, type: "pbox-sync-library" })
+        sendRuntimeMessage({ source: SOURCE, type: "pbox-sync-library" })
           .then((result) => {
+            if (!result) return;
             window.dispatchEvent(new CustomEvent("pbox-cinejoy-library-sync-result", { detail: result }));
           })
           .catch((error) => {
@@ -276,33 +320,30 @@
       });
 
       window.addEventListener("pbox-library-changed", () => {
-        chrome.runtime.sendMessage({ source: SOURCE, type: "pbox-library-changed" }).catch(() => {});
+        void sendRuntimeMessage({ source: SOURCE, type: "pbox-library-changed" });
       });
     }
 
-    chrome.runtime.sendMessage({
+    void sendRuntimeMessage({
       source: SOURCE,
       type: "pbox-register",
       origin: location.origin,
       pageUrl: location.href,
-    }).catch(() => {});
+    });
     return true;
   }
 
   async function getTabRole() {
-    try {
-      return await chrome.runtime.sendMessage({ source: SOURCE, type: "tab-role" });
-    } catch {
-      return null;
-    }
+    return await sendRuntimeMessage({ source: SOURCE, type: "tab-role" });
   }
 
   function sendVideo(video, event) {
+    if (!extensionAlive) return;
     const duration = Number.isFinite(video.duration) ? video.duration : null;
     const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     if (duration != null && duration > 0 && duration < MIN_MEDIA_DURATION_SECONDS) return;
     const percent = duration && duration > 0 ? currentTime / duration : null;
-    chrome.runtime.sendMessage({
+    void sendRuntimeMessage({
       source: SOURCE,
       type: "playback",
       event,
@@ -314,7 +355,7 @@
       percent,
       completed: video.ended || (percent != null && percent >= 0.9),
       frameTitle: document.title || null,
-    }).catch(() => {});
+    });
   }
 
   function attachVideo(video) {
@@ -338,6 +379,7 @@
   }
 
   function scan() {
+    if (!extensionAlive) return;
     sendContext("scan");
     document.querySelectorAll("video").forEach(attachVideo);
   }
@@ -354,7 +396,7 @@
     if (window.top === window) {
       window.addEventListener("popstate", () => sendContext("navigation"));
       window.addEventListener("hashchange", () => sendContext("navigation"));
-      setInterval(() => sendContext("tick"), 1500);
+      tickTimer = setInterval(() => sendContext("tick"), 1500);
     }
   }
 
